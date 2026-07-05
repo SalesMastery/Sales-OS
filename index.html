@@ -2349,9 +2349,7 @@ button.rb.accent{border-color:rgba(232,160,32,.3) !important;color:var(--amber) 
       <span class="sb-item-dot"></span>
     </div>
   </nav>
-  <div class="sb-bottom">
-    <button class="sb-connect-btn" id="ghl-connect-btn" onclick="ghlOpenSettings()"><span class="sb-connect-icon">⚡</span><span class="sb-connect-txt" id="ghl-connect-txt">Connect GHL</span><span class="sb-connect-dot" id="ghl-connect-dot"></span></button>
-  </div>
+
 </aside>
 <div id="content">
   <div id="topbar">
@@ -5339,7 +5337,7 @@ var GHL_Appts=(function(){
 <script>
 var SUPABASE_URL="https://ytfayzsohuojiyuhtjxw.supabase.co";
 var SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl0ZmF5enNvaHVvaml5dWh0anh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1MjEyMzksImV4cCI6MjA5ODA5NzIzOX0.fyBobDdfM4-lL8BFMSohUZ_QsYrrQqwrr36JXMtY1oA";
-var _sb=null,_currentUser=null,_currentOrg=null,_currentOrgConfig=null;
+var _sb=null,_currentUser=null,_currentOrg=null,_currentOrgConfig=null,_ownOrgConfig=null,_ownOrgId=null;
 function getSB(){if(!_sb)_sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);return _sb;}
 
 window.AUTH_onSignedIn=async function(user){
@@ -5363,7 +5361,7 @@ window.AUTH_onSignedIn=async function(user){
     var{data:orgData}=await sb.from("orgs").select("*").eq("id",profile.org_id).single();
     org=orgData;
   }
-  _currentOrg=org;_currentOrgConfig=org;
+  _currentOrg=org;_currentOrgConfig=org;_ownOrgConfig=org;_ownOrgId=profile.org_id||null;
   window.AUTH_applyOrgConfig(org,profile.role);
   document.getElementById("auth-overlay").classList.add("hidden");
   if(profile.role==="superadmin"){window.ADMIN_open();await window.ADMIN_loadOrgs();}
@@ -5382,6 +5380,7 @@ window.AUTH_onSignedOut=function(){
 
 window.AUTH_applyOrgConfig=function(cfg,role){
   if(!cfg)return;
+  var cfgBtn=document.getElementById("um-cfg-btn");if(cfgBtn)cfgBtn.style.display="";
   var badge=document.getElementById("topbar-org-name");
   if(badge&&cfg.name){badge.textContent=cfg.name;badge.style.display="";}
   var av=document.getElementById("user-avatar-btn");
@@ -5478,8 +5477,38 @@ window.ADMIN_loadOrgs=async function(){
   if(error||!orgs||!orgs.length){tbody.innerHTML="<tr><td colspan='5' style='text-align:center;color:var(--sub);padding:24px;font-family:var(--mono);font-size:9px'>No clients yet</td></tr>";return;}
   tbody.innerHTML=orgs.map(function(org){
     var d=new Date(org.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
-    return "<tr><td><strong>"+org.name+"</strong></td><td style='color:var(--sub)'>"+(org.admin_email||"—")+"</td><td><span class='org-status-active'>Active</span></td><td style='color:var(--sub)'>"+d+"</td><td style='text-align:right'><div style='display:flex;gap:6px;justify-content:flex-end'><button class='admin-btn-ghost' onclick='window.ADMIN_editOrg(\""+org.id+"\")' style='font-size:11px;padding:5px 10px'>Edit</button><button class='admin-btn-danger' onclick='window.ADMIN_deleteOrg(\""+org.id+"\",\""+org.name+"\")'  style='font-size:11px;padding:5px 10px'>Delete</button></div></td></tr>";
+    var isMine=org.id===_ownOrgId;
+    var mineBtn=isMine
+      ?"<button class='admin-btn-ghost' onclick='window.ADMIN_unsetMyOrg()' style='font-size:11px;padding:5px 10px;color:var(--amber)'>★ My Org</button>"
+      :"<button class='admin-btn-ghost' onclick='window.ADMIN_setMyOrg(\""+org.id+"\",\""+org.name+"\")' style='font-size:11px;padding:5px 10px'>Set as My Org</button>";
+    return "<tr><td><strong>"+org.name+"</strong></td><td style='color:var(--sub)'>"+(org.admin_email||"—")+"</td><td><span class='org-status-active'>Active</span></td><td style='color:var(--sub)'>"+d+"</td><td style='text-align:right'><div style='display:flex;gap:6px;justify-content:flex-end'>"+mineBtn+"<button class='admin-btn-ghost' onclick='window.ADMIN_editOrg(\""+org.id+"\")' style='font-size:11px;padding:5px 10px'>Edit</button><button class='admin-btn-danger' onclick='window.ADMIN_deleteOrg(\""+org.id+"\",\""+org.name+"\")'  style='font-size:11px;padding:5px 10px'>Delete</button></div></td></tr>";
   }).join("");
+};
+
+window.ADMIN_setMyOrg=async function(orgId,orgName){
+  if(!_currentUser)return;
+  var sb=getSB();
+  var{error}=await sb.from("user_profiles").upsert({id:_currentUser.id,org_id:orgId,role:"superadmin",email:_currentUser.email});
+  if(error){gToast("Failed to set org: "+error.message,"error");return;}
+  var{data:org}=await sb.from("orgs").select("*").eq("id",orgId).single();
+  _ownOrgId=orgId;_ownOrgConfig=org;
+  if(!_viewingOrgId){_currentOrgConfig=org;window.AUTH_applyOrgConfig(org,"superadmin");}
+  gToast("\""+orgName+"\" set as your org","success");
+  await window.ADMIN_loadOrgs();
+};
+
+window.ADMIN_unsetMyOrg=async function(){
+  if(!_currentUser)return;
+  var sb=getSB();
+  var{error}=await sb.from("user_profiles").update({org_id:null}).eq("id",_currentUser.id);
+  if(error){gToast("Failed to unset org: "+error.message,"error");return;}
+  _ownOrgId=null;_ownOrgConfig=null;
+  if(!_viewingOrgId){
+    _currentOrgConfig=null;
+    var badge=document.getElementById("topbar-org-name");if(badge)badge.style.display="none";
+  }
+  gToast("Removed as your org","info");
+  await window.ADMIN_loadOrgs();
 };
 
 window.ADMIN_editOrg=async function(orgId){var{data:org}=await getSB().from("orgs").select("*").eq("id",orgId).single();if(org){_currentOrgConfig=org;window.CFG_open(org);}};
@@ -5487,7 +5516,7 @@ window.ADMIN_deleteOrg=async function(orgId,orgName){if(!confirm("Delete \""+org
 
 var _cfgOrgId=null;
 window.CFG_open=function(org){
-  var cfg=org||_currentOrgConfig;if(!cfg)return;
+  var cfg=org||_currentOrgConfig;if(!cfg){gToast("No organization on this account to configure","info");return;}
   _cfgOrgId=cfg.id;
   document.getElementById("config-modal-org-name").textContent=cfg.name||"Settings";
   document.getElementById("cfg-url-kpid").value=cfg.url_kpid||"";
@@ -5604,6 +5633,7 @@ window.ADMIN_switchToClient = function(orgId) {
   var org = _allOrgs.find(function(o) { return o.id === orgId; });
   if (!org) return;
   _viewingOrgId = orgId;
+  _currentOrgConfig = org;
   // Close menus
   var m1 = document.getElementById('client-switcher-menu'); if (m1) m1.style.display = 'none';
   var m2 = document.getElementById('topbar-switcher-menu'); if (m2) m2.style.display = 'none';
@@ -5624,13 +5654,14 @@ window.ADMIN_switchToClient = function(orgId) {
 
 window.ADMIN_viewOwnDashboard = function() {
   _viewingOrgId = null;
+  _currentOrgConfig = _ownOrgConfig;
   var m = document.getElementById('client-switcher-menu'); if (m) m.style.display = 'none';
   document.getElementById('admin-panel').classList.remove('open');
   var badge = document.getElementById('topbar-org-name'); if (badge) badge.style.display = 'none';
   var sw = document.getElementById('topbar-client-switcher'); if (sw) sw.style.display = 'none';
   var lbl = document.getElementById('client-switcher-label'); if (lbl) lbl.textContent = 'View as Client ▾';
   // Restore own config if superadmin has an org
-  if (_currentOrgConfig) window.AUTH_applyOrgConfig(_currentOrgConfig, 'superadmin');
+  if (_currentOrgConfig) { window.AUTH_applyOrgConfig(_currentOrgConfig, 'superadmin'); }
 };
 
 // Store orgs when loaded for switcher
